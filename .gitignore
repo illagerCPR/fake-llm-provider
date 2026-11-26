@@ -1,0 +1,32 @@
+# deps
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+dist-cf/
+*.tsbuildinfo
+
+# cloudflare
+.wrangler/
+.dev.vars
+.dev.vars.*
+
+# runtime data
+.data/
+data/
+*.log
+coverage/
+test-results/
+
+# dsh memory db（本地记忆库，含明文对话摘要，禁止提交）
+.dsh-meow/
+
+# editor / os
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# 本地生成的 Cloudflare 管理台口令
+.admin-token

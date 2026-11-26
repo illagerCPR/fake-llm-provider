@@ -1,0 +1,40 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "fake-llm-provider",
+  "main": "src/runtime/worker.ts",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./dist/ui",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "HUB",
+        "class_name": "FakeLlmHub"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["FakeLlmHub"]
+    }
+  ],
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "MODE": "fixed",
+    "TPS": "20",
+    "UNIT": "token"
+  },
+  "routes": [
+    {
+      "pattern": "fake-llm.illageraris.dpdns.org",
+      "custom_domain": true
+    }
+  ]
+}

@@ -1,0 +1,169 @@
+import type { ModelInfo } from './protocol/types'
+import type { Settings } from './settings'
+import type { ProfileKind } from './types'
+
+export interface ModelProfile {
+  id: string
+  kind: ProfileKind
+  label: string
+  description: string
+  defaults?: {
+    ttftMs?: number
+    status?: number
+    failAfterTokens?: number
+  }
+}
+
+/** 模型名即档位：客户端只要换个 model 就能切行为，不必改服务端配置 */
+export const MODEL_PROFILES: ModelProfile[] = [
+  {
+    id: 'fake-fixed',
+    kind: 'fixed',
+    label: '固定文本',
+    description: '按配置话术与 TPS 稳定流式输出',
+  },
+  {
+    id: 'fake-manual',
+    kind: 'manual',
+    label: '人工回复',
+    description: '挂在管理台上，由人一段段打字推进',
+  },
+  {
+    id: 'fake-instant',
+    kind: 'instant',
+    label: '秒回',
+    description: '一次性吐完，没有节拍（检验客户端是否真在增量处理）',
+  },
+  {
+    id: 'fake-slow',
+    kind: 'slow',
+    label: '慢首字',
+    description: '首字延迟 30 秒，用来打客户端超时/重试',
+    defaults: { ttftMs: 30_000 },
+  },
+  {
+    id: 'fake-fail',
+    kind: 'fail',
+    label: '直接报错',
+    description: '按指定状态码返回错误体（默认 500）',
+    defaults: { status: 500 },
+  },
+  {
+    id: 'fake-truncate',
+    kind: 'truncate',
+    label: '半截断流',
+    description: '吐若干 token 后直接断开，检验半截流处理',
+    defaults: { failAfterTokens: 6 },
+  },
+]
+
+const MODEL_CREATED = 1_735_689_600 // 2025-01-01T00:00:00Z
+
+export interface Behavior {
+  kind: ProfileKind
+  text: string
+  tps: number
+  ttftMs: number
+  status: number
+  failAfterTokens: number
+  chunkTokens: number
+  label: string
+}
+
+const KINDS: ProfileKind[] = ['fixed', 'manual', 'instant', 'slow', 'fail', 'truncate']
+
+function pickKind(value: unknown): ProfileKind | undefined {
+  return typeof value === 'string' && (KINDS as string[]).includes(value) ? (value as ProfileKind) : undefined
+}
+
+function headerNumber(headers: Record<string, string | undefined>, name: string): number | undefined {
+  const raw = headers[name]
+  if (raw === undefined || raw === '') return undefined
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : undefined
+}
+
+function bodyNumber(fake: Record<string, unknown> | null | undefined, name: string): number | undefined {
+  const value = fake?.[name]
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '') {
+    const n = Number(value)
+    if (Number.isFinite(n)) return n
+  }
+  return undefined
+}
+
+/** 模型列表（给 /v1/models 用） */
+export function modelInfos(settings: Settings): ModelInfo[] {
+  const ids = new Set(MODEL_PROFILES.map((p) => p.id))
+  const list: ModelInfo[] = MODEL_PROFILES.map((p) => ({
+    id: p.id,
+    displayName: p.label,
+    created: MODEL_CREATED,
+  }))
+  if (settings.defaultModel && !ids.has(settings.defaultModel)) {
+    list.push({ id: settings.defaultModel, displayName: settings.defaultModel, created: MODEL_CREATED })
+  }
+  return list
+}
+
+/**
+ * 决定这一次请求怎么回。优先级：请求体 fake 字段 > X-Fake-* 头 > 模型名档位 > 全局设置。
+ */
+export function resolveBehavior(input: {
+  model: string
+  settings: Settings
+  headers: Record<string, string | undefined>
+  fake?: Record<string, unknown> | null
+}): Behavior {
+  const { model, settings, headers } = input
+  const fake = input.fake ?? null
+  const profile = MODEL_PROFILES.find((p) => p.id === model)
+
+  const kind =
+    pickKind(fake?.kind) ??
+    pickKind(headers['x-fake-kind']) ??
+    profile?.kind ??
+    (settings.mode as ProfileKind)
+
+  let tps = settings.tps
+  let ttftMs = profile?.defaults?.ttftMs ?? settings.ttftMs
+  let status = profile?.defaults?.status ?? 500
+  let failAfterTokens = profile?.defaults?.failAfterTokens ?? 6
+  let chunkTokens = settings.chunkTokens
+
+  const headerTps = headerNumber(headers, 'x-fake-tps')
+  if (headerTps !== undefined) tps = headerTps
+  const headerTtft = headerNumber(headers, 'x-fake-ttft-ms')
+  if (headerTtft !== undefined) ttftMs = headerTtft
+  const headerStatus = headerNumber(headers, 'x-fake-status')
+  if (headerStatus !== undefined) status = headerStatus
+  const headerFailAfter = headerNumber(headers, 'x-fake-fail-after-tokens')
+  if (headerFailAfter !== undefined) failAfterTokens = headerFailAfter
+  const headerChunk = headerNumber(headers, 'x-fake-chunk-tokens')
+  if (headerChunk !== undefined) chunkTokens = headerChunk
+
+  const fakeTps = bodyNumber(fake, 'tps')
+  if (fakeTps !== undefined) tps = fakeTps
+  const fakeTtft = bodyNumber(fake, 'ttftMs')
+  if (fakeTtft !== undefined) ttftMs = fakeTtft
+  const fakeStatus = bodyNumber(fake, 'status')
+  if (fakeStatus !== undefined) status = fakeStatus
+  const fakeFailAfter = bodyNumber(fake, 'failAfterTokens')
+  if (fakeFailAfter !== undefined) failAfterTokens = fakeFailAfter
+  const fakeChunk = bodyNumber(fake, 'chunkTokens')
+  if (fakeChunk !== undefined) chunkTokens = fakeChunk
+
+  const text = typeof fake?.text === 'string' ? fake.text : settings.text
+
+  return {
+    kind,
+    text,
+    tps,
+    ttftMs,
+    status: Math.round(status),
+    failAfterTokens: Math.max(0, Math.round(failAfterTokens)),
+    chunkTokens: Math.max(0, Math.round(chunkTokens)),
+    label: profile?.label ?? '默认档位',
+  }
+}

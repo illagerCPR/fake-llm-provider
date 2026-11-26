@@ -1,0 +1,46 @@
+{
+  "name": "fake-llm-provider",
+  "version": "0.1.0",
+  "description": "Controllable fake LLM upstream for integration testing — OpenAI & Anthropic compatible, fixed or human-typed replies, adjustable tokens per second.",
+  "type": "module",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx watch src/runtime/node.ts",
+    "dev:ui": "vite",
+    "build": "pnpm run build:ui && pnpm run build:node",
+    "build:ui": "vite build",
+    "build:node": "esbuild src/runtime/node.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/node.mjs --log-level=warning",
+    "start": "node dist/node.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.worker.json --noEmit && tsc -p tsconfig.ui.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "cf:dev": "wrangler dev",
+    "cf:deploy": "wrangler deploy",
+    "cf:dry": "wrangler deploy --dry-run --outdir dist-cf",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.11",
+    "hono": "^4.13.22",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "1.13.0",
+    "@cloudflare/workers-types": "^5.20261125.1",
+    "@preact/preset-vite": "^2.10.6",
+    "@types/node": "26.6.6",
+    "esbuild": "^0.28.2",
+    "openai": "7.63.0",
+    "preact": "^11.2.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "vitest": "5.1.1",
+    "wrangler": "^4.168.0"
+  },
+  "packageManager": "pnpm@12.16.1"
+}
