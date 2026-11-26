@@ -26,6 +26,14 @@ docker run -d --name fake-llm -p 8080:8080 \
   fake-llm-provider:0.1.0
 ```
 
+发布版镜像也可以直接拉（GitHub Release 时构建多架构版本）：
+
+```bash
+docker run -d --name fake-llm -p 8080:8080 \
+  -e ADMIN_TOKEN=change-me \
+  ghcr.io/illagercpr/fake-llm-provider:0.1.0
+```
+
 或者直接：
 
 ```bash
