@@ -214,7 +214,7 @@ POST /v1/chat/completions
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/v1/chat/completions` | OpenAI 流式 / 非流式，`tools` 透传与假 `tool_calls` 分支 |
+| POST | `/v1/chat/completions` | OpenAI 流式 / 非流式，`tools` 透传（v0.1.0 只记录不模拟 tool_calls） |
 | POST | `/v1/messages` | Anthropic 流式 / 非流式（含 `tool_use` 分支、`count_tokens` 可选） |
 | GET | `/v1/models` | 档位即模型；按 `anthropic-version` / `x-api-key` 头区分两种返回形状 |
 | POST | `/v1/embeddings` | 确定性伪向量（同输入同输出），维度可配（OpenAI 侧） |
@@ -285,4 +285,4 @@ pnpm cf:deploy   # 已登录（wrangler OAuth 可用），部署出 *.workers.de
 
 ## 附：v0.2 候选
 
-按调用序列的剧本（第一次 429、第二次 200）、精确 tokenizer、`/v1/completions`、`/v1/responses`、延迟分布图、多副本一致性（SQLite/Redis）、thinking / reasoning 增量。
+假的 `tool_calls` / `tool_use` 流式分支、按调用序列的剧本（第一次 429、第二次 200）、精确 tokenizer、`/v1/completions`、`/v1/responses`、延迟分布图、多副本一致性（SQLite/Redis）、thinking / reasoning 增量。

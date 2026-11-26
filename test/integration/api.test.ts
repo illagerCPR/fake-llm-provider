@@ -313,3 +313,22 @@ describe('辅助接口', () => {
     expect(res.status).toBe(400)
   })
 })
+
+describe('非流式耗时模拟', () => {
+  it('simulateDuration=false 时立刻返回，不做节拍', async () => {
+    const { app } = setup({ simulateDuration: false, tps: 1, ttftMs: 5000 })
+    const startedAt = Date.now()
+    const res = await app.request('/v1/chat/completions', json(chatBody({ stream: false })))
+    const elapsed = Date.now() - startedAt
+    expect(res.status).toBe(200)
+    expect(elapsed).toBeLessThan(500)
+  })
+
+  it('默认会按 TPS 模拟耗时', async () => {
+    const { app } = setup({ tps: 1000, ttftMs: 120, text: '一二三四五' })
+    const startedAt = Date.now()
+    await app.request('/v1/chat/completions', json(chatBody({ stream: false })))
+    const elapsed = Date.now() - startedAt
+    expect(elapsed).toBeGreaterThanOrEqual(120)
+  })
+})

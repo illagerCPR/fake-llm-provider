@@ -218,7 +218,9 @@ export interface CompleteContext {
 
 /** 非流式：等"生成"完再一次性返回；时长与流式一致，方便测超时 */
 export async function completeOnce(ctx: CompleteContext): Promise<unknown> {
-  const { session, adapter, behavior, settings } = ctx
+  const { session, adapter, settings } = ctx
+  // 非流式默认也模拟"生成耗时"，方便测超时；关掉 simulateDuration 就立即返回
+  const behavior = settings.simulateDuration ? ctx.behavior : { ...ctx.behavior, tps: 0, ttftMs: 0 }
 
   if (behavior.ttftMs > 0) await ctx.sleep(behavior.ttftMs)
   session.markStarted(ctx.now())
