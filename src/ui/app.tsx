@@ -200,6 +200,7 @@ export function App() {
                     <span class="session-model">
                       {session.model}
                       <span class="tag">{session.protocol === 'openai' ? 'OpenAI' : 'Anthropic'}</span>
+                      {session.request.routedModel && <span class="tag ghosted">→ {session.request.routedModel}</span>}
                       {session.stream && <span class="tag ghosted">stream</span>}
                     </span>
                     <span class="muted small">
@@ -251,6 +252,20 @@ export function App() {
                 <option value="fixed">fixed · 固定话术</option>
                 <option value="manual">manual · 人工回复</option>
                 <option value="instant">instant · 一次性吐完</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>模型名不认识时回落到（空 = 走上一项）</span>
+              <select
+                value={draft.defaultModel}
+                onChange={(e) => update({ defaultModel: (e.target as HTMLSelectElement).value })}
+              >
+                <option value="">（不回落）</option>
+                {(state?.models ?? []).map((m) => (
+                  <option value={m.id}>
+                    {m.id} · {m.label}
+                  </option>
+                ))}
               </select>
             </label>
             <label class="field">
@@ -381,6 +396,14 @@ export function App() {
                 <label class="field">
                   <span>假工具参数（JSON 字符串）</span>
                   <input value={draft.toolArgs} onInput={(e) => update({ toolArgs: (e.target as HTMLInputElement).value })} />
+                </label>
+                <label class="field wide">
+                  <span>回显话术（fake-echo 档位的默认回复，{'{{model}}'} = 客户端请求的模型名）</span>
+                  <textarea
+                    rows={3}
+                    value={draft.echoText}
+                    onInput={(e) => update({ echoText: (e.target as HTMLTextAreaElement).value })}
+                  />
                 </label>
                 <label class="field wide">
                   <span>剧本（JSON 数组，fake-script 档位按次生效；留空用默认「先 429 再成功」）</span>

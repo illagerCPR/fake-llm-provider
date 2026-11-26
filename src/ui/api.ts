@@ -24,6 +24,7 @@ export interface Settings {
   fallbackText: string
   simulateDuration: boolean
   defaultModel: string
+  echoText: string
   toolName: string
   toolArgs: string
   script: ScriptStep[]
@@ -45,6 +46,7 @@ export interface RequestRecord {
   path: string
   method: string
   model: string
+  routedModel?: string
   stream: boolean
   headers: Record<string, string>
   body: unknown

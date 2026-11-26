@@ -94,6 +94,16 @@ describe('OpenAI SDK 契约', () => {
     expect(JSON.parse(args)).toEqual({ city: '上海', unit: 'celsius' })
   })
 
+  it('线上模型名会被 fake-echo 接住并回显', async () => {
+    const completion = await client().chat.completions.create({
+      model: 'gpt-4o',
+      messages: [{ role: 'user', content: 'ping' }],
+    })
+    expect(completion.model).toBe('gpt-4o')
+    expect(completion.choices[0]?.message.content).toContain('gpt-4o')
+    expect(completion.choices[0]?.finish_reason).toBe('stop')
+  })
+
   it('models.list 可用', async () => {
     const models = await client().models.list()
     expect(models.data.some((m) => m.id === 'fake-manual')).toBe(true)
@@ -160,6 +170,17 @@ describe('Anthropic SDK 契约', () => {
       expect(block.input).toEqual({ city: '上海', unit: 'celsius' })
     }
     expect(message.stop_reason).toBe('tool_use')
+  })
+
+  it('线上模型名会被 fake-echo 接住并回显', async () => {
+    const message = await client().messages.create({
+      model: 'claude-3-5-sonnet-latest',
+      max_tokens: 64,
+      messages: [{ role: 'user', content: 'ping' }],
+    })
+    const block = message.content[0]
+    expect(block?.type === 'text' ? block.text : '').toContain('claude-3-5-sonnet-latest')
+    expect(message.stop_reason).toBe('end_turn')
   })
 
   it('count_tokens 可用', async () => {

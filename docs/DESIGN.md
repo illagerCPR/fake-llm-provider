@@ -1,6 +1,6 @@
 # 假 LLM 提供商 · 技术选型与实施计划
 
-> 版本：**v0.2.0**（2026-11-26）
+> 版本：**v0.2.1**（2026-11-26）
 > 仓库：<https://github.com/illagerCPR/fake-llm-provider>
 
 ## 0. 决策记录
@@ -12,6 +12,7 @@
 | 2026-11-26 | v0.1.0 首发 | 签名 tag + GHCR 多架构镜像 + GitHub Release |
 | 2026-11-26 | **放弃 Cloudflare 部署** | workers.dev 在用户网络被 SNI 阻断；自定义域名所在 zone 强制人机验证（`cf-mitigated: challenge`），加白名单后才可用；维护两套运行时收益不抵成本。已删除 Worker、Durable Object 适配、wrangler 配置与相关文档，项目回到 **Node + Docker 单栈** |
 | 2026-11-26 | v0.2.0 | 补假工具调用、按调用序列的剧本、精确 tokenizer |
+| 2026-11-26 | v0.2.1 未知模型名回显 | 客户端发的模型名不在档位表里时，回落到 `fake-echo` 并在回复里带上那个名字；`DEFAULT_MODEL` 真正接进路由，`MODE` 退化为它的兜底 |
 
 ## 1. 目标
 
@@ -146,6 +147,15 @@ waiting_human ──say(text)──► streaming ──写完──► waiting_h
 档位：`fixed` / `manual` / `instant` / `slow` / `fail` / `truncate` / `tool` / `script`；
 优先级：请求体 `fake` > `X-Fake-*` 头 > 模型名 > 全局设置。
 
+### 4.7 未知模型名回显
+
+客户端继续用线上那套配置（`model: gpt-4o-mini` 之类）打过来时，既不 404 也不默默走默认话术，而是**回落到 `fake-echo` 档位**，回复里原样带上请求的模型名——「模型名传错了」和「baseURL 换了但模型名没换」这两类问题因此一眼可见。
+
+- 回落链：`model` 命中档位表 → 用它；否则 `DEFAULT_MODEL`（默认 `fake-echo`）→ 用它；再否则 `MODE`（`fixed` / `manual` / `instant`）。
+- 回显话术独立于 `TEXT`（`ECHO_TEXT`），因为它必须带上 `{{model}}`；请求体 `fake.text` 依旧能按次覆盖。
+- 回落是**可见的**：响应头 `x-fake-routed-model`、请求记录 `routedModel`、控制台会话行的 `→ fake-echo`、调用体检里的一条 warn。
+- 响应体里的 `model` 仍然回显客户端请求的名字（真上游也是这么干的），不暴露内部档位 id。
+
 体检规则（只提示，`STRICT=true` 才拦截）：鉴权头、`include_usage`、`temperature`、`max_tokens`、`anthropic-version`、messages 是否为空、是否带 tools。
 
 ## 5. 测试
@@ -155,7 +165,7 @@ waiting_human ──say(text)──► streaming ──写完──► waiting_h
 | 单元 | 切分不变量、节拍精度、tiktoken 计数与增量计数、SSE 编码、模板、设置校验 |
 | 集成 | `app.request()` 直接打路由：两种协议流式/非流式、工具调用、剧本、错误档位、鉴权、管理 API |
 | 契约 | 官方 `openai` / `@anthropic-ai/sdk` 打真实 HTTP 端口，覆盖流式、tool_calls、tool_use、错误、embeddings |
-| 冒烟 | `scripts/smoke.mjs` 对任意已运行实例跑 10 项检查（含人工回复、工具调用、剧本） |
+| 冒烟 | `scripts/smoke.mjs` 对任意已运行实例跑 11 项检查（含人工回复、工具调用、剧本、未知模型回显） |
 
 ## 6. 风险与对策
 

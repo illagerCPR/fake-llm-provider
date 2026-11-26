@@ -1,6 +1,6 @@
 {
   "name": "fake-llm-provider",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Controllable fake LLM upstream for integration testing — OpenAI & Anthropic compatible, fixed or human-typed replies, adjustable tokens per second.",
   "type": "module",
   "license": "MIT",

@@ -5,7 +5,7 @@
  *   SMOKE_BASE_URL=http://127.0.0.1:8080 ADMIN_TOKEN=xxx node scripts/smoke.mjs
  *
  * 覆盖：健康检查、模型列表（两种形状）、非流式、流式、Anthropic 流式、
- * 错误档位、工具调用、剧本、人工回复（后两项需要 ADMIN_TOKEN）。
+ * 错误档位、工具调用、未知模型回显、剧本、人工回复（后两项需要 ADMIN_TOKEN）。
  */
 
 const BASE = (process.env.SMOKE_BASE_URL ?? process.argv[2] ?? 'http://127.0.0.1:8080').replace(/\/$/, '')
@@ -219,7 +219,24 @@ async function main() {
     )
   }
 
-  // 9. 人工回复
+  // 9. 未知模型回显
+  const echoed = await jsonFetch('/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: 'hi' }],
+      fake: { tps: 500, ttftMs: 0 },
+    }),
+  })
+  const echoText = echoed.body?.choices?.[0]?.message?.content ?? ''
+  const routed = echoed.headers.get('x-fake-routed-model')
+  check(
+    '未知模型回显',
+    echoed.status === 200 && echoText.includes('gpt-4o-mini') && routed === 'fake-echo',
+    `routed=${routed}`,
+  )
+
+  // 10. 人工回复
   if (!ADMIN_TOKEN) {
     console.log('  - 跳过人工回复测试（未提供 ADMIN_TOKEN）')
   } else {

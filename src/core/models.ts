@@ -14,6 +14,9 @@ export interface ModelProfile {
   }
 }
 
+/** 模型名不在上表里时的落脚档位：回复里带上客户端请求的那个名字 */
+export const ECHO_MODEL_ID = 'fake-echo'
+
 /** 模型名即档位：客户端只要换个 model 就能切行为，不必改服务端配置 */
 export const MODEL_PROFILES: ModelProfile[] = [
   {
@@ -21,6 +24,12 @@ export const MODEL_PROFILES: ModelProfile[] = [
     kind: 'fixed',
     label: '固定文本',
     description: '按配置话术与 TPS 稳定流式输出',
+  },
+  {
+    id: ECHO_MODEL_ID,
+    kind: 'fixed',
+    label: '回显模型名',
+    description: '模型名不认识时落到这里，回复里带上请求用的模型名',
   },
   {
     id: 'fake-manual',
@@ -88,6 +97,10 @@ export interface Behavior {
   label: string
   /** kind === 'tool' 时有值 */
   toolCall?: ToolSpec
+  /** 请求的模型名不在档位表里（原样记录下来，方便回显与排查） */
+  fallbackFrom?: string
+  /** 实际接住这次请求的档位 id */
+  fallbackTo?: string
 }
 
 const KINDS: ProfileKind[] = ['fixed', 'manual', 'instant', 'slow', 'fail', 'truncate', 'tool', 'script']
@@ -134,6 +147,8 @@ export function modelInfos(settings: Settings): ModelInfo[] {
 
 /**
  * 决定这一次请求怎么回。优先级：请求体 fake 字段 > X-Fake-* 头 > 模型名档位 > 全局设置。
+ * 模型名不认识时先回落到 defaultModel 指定的档位（默认 fake-echo，回复里带上那个名字），
+ * 没配 defaultModel 才退回全局 mode。
  * 剧本档位只在这里标出 kind，具体取哪一步由调用方（带计数器）决定。
  */
 export function resolveBehavior(input: {
@@ -144,7 +159,9 @@ export function resolveBehavior(input: {
 }): Behavior {
   const { model, settings, headers } = input
   const fake = input.fake ?? null
-  const profile = MODEL_PROFILES.find((p) => p.id === model)
+  const matched = MODEL_PROFILES.find((p) => p.id === model)
+  const fallback = matched ? undefined : MODEL_PROFILES.find((p) => p.id === settings.defaultModel)
+  const profile = matched ?? fallback
 
   const kind =
     pickKind(fake?.kind) ??
@@ -180,7 +197,9 @@ export function resolveBehavior(input: {
   const fakeChunk = bodyNumber(fake, 'chunkTokens')
   if (fakeChunk !== undefined) chunkTokens = fakeChunk
 
-  const text = typeof fake?.text === 'string' ? fake.text : settings.text
+  // 回显档位自己的默认话术（要显示请求的模型名），其余档位用全局话术
+  const profileText = profile?.id === ECHO_MODEL_ID ? settings.echoText : undefined
+  const text = typeof fake?.text === 'string' ? fake.text : (profileText ?? settings.text)
   const toolName = bodyString(fake, 'toolName') ?? headers['x-fake-tool-name'] ?? settings.toolName
   const toolArgs = bodyString(fake, 'toolArgs') ?? settings.toolArgs
 
@@ -193,6 +212,7 @@ export function resolveBehavior(input: {
     failAfterTokens: Math.max(0, Math.round(failAfterTokens)),
     chunkTokens: Math.max(0, Math.round(chunkTokens)),
     label: profile?.label ?? '默认档位',
+    ...(fallback ? { fallbackFrom: model, fallbackTo: fallback.id } : {}),
     ...(kind === 'tool' ? { toolCall: { name: toolName, arguments: toolArgs } } : {}),
   }
 }

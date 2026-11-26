@@ -65,6 +65,8 @@ export interface RequestRecord {
   path: string
   method: string
   model: string
+  /** 模型名不在档位表里时，实际接住这次请求的档位 id（如 fake-echo） */
+  routedModel?: string
   stream: boolean
   headers: Record<string, string>
   body: unknown

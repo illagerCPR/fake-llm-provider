@@ -252,6 +252,67 @@ describe('Anthropic 兼容层', () => {
   })
 })
 
+describe('未知模型名', () => {
+  it('OpenAI 非流式：回落到 fake-echo，回复里带上请求的模型名', async () => {
+    const { app, hub } = setup()
+    const res = await app.request('/v1/chat/completions', json({ model: 'gpt-4o-mini', messages: [{ role: 'user', content: 'hi' }] }))
+    expect(res.status).toBe(200)
+    expect(res.headers.get('x-fake-routed-model')).toBe('fake-echo')
+    const body = (await res.json()) as any
+    expect(body.model).toBe('gpt-4o-mini')
+    expect(body.choices[0].message.content).toContain('gpt-4o-mini')
+    expect(body.choices[0].message.content).toContain('fake-echo')
+
+    const record = (await hub.listRequests(1))[0]
+    expect(record?.model).toBe('gpt-4o-mini')
+    expect(record?.routedModel).toBe('fake-echo')
+    expect(record?.lint.some((item) => item.label.includes('已回落到 fake-echo'))).toBe(true)
+  })
+
+  it('Anthropic 流式：同样回落到 fake-echo', async () => {
+    const { app } = setup()
+    const res = await app.request('/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': 'sk-test', 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-5',
+        max_tokens: 100,
+        stream: true,
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('x-fake-routed-model')).toBe('fake-echo')
+    const events = parseSse(await res.text())
+    expect(anthropicContent(events)).toContain('claude-sonnet-4-5')
+    expect(events.at(-1)?.event).toBe('message_stop')
+  })
+
+  it('显式请求 fake-echo 不打回落标记', async () => {
+    const { app } = setup()
+    const res = await app.request('/v1/chat/completions', json({ model: 'fake-echo', messages: [{ role: 'user', content: 'hi' }] }))
+    expect(res.status).toBe(200)
+    expect(res.headers.get('x-fake-routed-model')).toBeNull()
+    const body = (await res.json()) as any
+    expect(body.choices[0].message.content).toContain('fake-echo')
+  })
+
+  it('DEFAULT_MODEL 可以换成别的档位', async () => {
+    const { app } = setup({ defaultModel: 'fake-instant' })
+    const res = await app.request('/v1/chat/completions', json({ model: 'whatever-1', messages: [{ role: 'user', content: 'hi' }] }))
+    expect(res.headers.get('x-fake-routed-model')).toBe('fake-instant')
+    expect(res.status).toBe(200)
+  })
+
+  it('/v1/models/:id 查不到时提示会回落到哪个档位', async () => {
+    const { app } = setup()
+    const res = await app.request('/v1/models/gpt-4o')
+    expect(res.status).toBe(404)
+    const body = (await res.json()) as any
+    expect(body.error.message).toContain('fake-echo')
+  })
+})
+
 describe('辅助接口', () => {
   it('/v1/models 按请求头返回两种形状', async () => {
     const { app } = setup()

@@ -1,7 +1,7 @@
 services:
   fake-llm:
     build: .
-    image: fake-llm-provider:0.1.0
+    image: fake-llm-provider:0.2.1
     container_name: fake-llm
     restart: unless-stopped
     ports:
@@ -10,6 +10,8 @@ services:
       # 管理台口令：公网/内网共享时务必改掉；留空则管理台不需要口令（只适合本机）
       ADMIN_TOKEN: change-me
       MODE: fixed
+      # 模型名不认识时落到哪个档位（空 = 不回落，走 MODE）
+      DEFAULT_MODEL: fake-echo
       TPS: "20"
       UNIT: token
       # 请求记录落盘目录（可选）

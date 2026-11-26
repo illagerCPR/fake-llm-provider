@@ -23,7 +23,7 @@
 docker run -d --name fake-llm -p 8080:8080 \
   -e ADMIN_TOKEN=change-me \
   -e TPS=20 \
-  ghcr.io/illagercpr/fake-llm-provider:0.2.0
+  ghcr.io/illagercpr/fake-llm-provider:0.2.1
 ```
 
 或者直接：
@@ -99,6 +99,7 @@ curl -N http://127.0.0.1:8080/v1/chat/completions \
 | 模型名 | 行为 |
 |---|---|
 | `fake-fixed` | 按配置话术与 TPS 正常流式输出 |
+| `fake-echo` | 模型名不认识时的落脚点：回复里带上客户端请求的那个模型名 |
 | `fake-manual` | 进入人工回复，挂在控制台等你打字 |
 | `fake-tool` | 返回一个假的 `tool_calls` / `tool_use`（函数名与参数可配） |
 | `fake-script` | 按调用次数执行剧本（默认第一次 429、第二次成功） |
@@ -107,7 +108,16 @@ curl -N http://127.0.0.1:8080/v1/chat/completions \
 | `fake-fail` | 直接返回错误体（默认 500，可调） |
 | `fake-truncate` | 吐几个 token 后直接断开，检验半截流处理 |
 
-用别的模型名（比如你线上真在用的 `gpt-4o-mini`）也可以，它走「默认回复来源」这一档，方便你只改 baseURL 就复用现有配置。
+用别的模型名（比如你线上真在用的 `gpt-4o-mini`、`claude-sonnet-4-5`）也可以：不要 404，也不用改自己客户端的配置，它会**回落到 `fake-echo`**，回复里直接写着客户端发来的那个名字：
+
+```
+【假 LLM 提供商】你请求的模型「gpt-4o-mini」不是本服务提供的假模型名，已由 fake-echo 档位接住。
+可用的模型名见 GET /v1/models；如果你本来就想用这个名字做测试，忽略这段说明即可。
+```
+
+这样「客户端把 model 传错了」「baseURL 改成假上游了但模型名还是线上的」这类问题，一眼就能从回复里看出来。回落同时体现在：响应头 `x-fake-routed-model: fake-echo`、控制台会话列表里的 `→ fake-echo` 标记、调用体检里的一条 warn，以及请求记录里的 `routedModel` 字段。
+
+掉到哪儿可以换：`DEFAULT_MODEL=fake-manual` 就是「任何模型名都走人工回复」，`DEFAULT_MODEL=fake-tool` 就是「任何模型名都返回工具调用」；把它置空则退回旧行为（未知名字走 `MODE`）。回显那段话术用 `ECHO_TEXT` 改，支持 `{{model}}`。
 
 ---
 
@@ -237,7 +247,9 @@ POST /v1/chat/completions
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `MODE` | `fixed` | 默认回复来源：`fixed` / `manual` / `instant` |
+| `MODE` | `fixed` | 兜底的回复来源：`fixed` / `manual` / `instant`（只在 `DEFAULT_MODEL` 为空时对未知模型名生效） |
+| `DEFAULT_MODEL` | `fake-echo` | 模型名不在档位表里时落到哪个档位；置空 = 不回落 |
+| `ECHO_TEXT` | 内置回显文本 | `fake-echo` 档位的默认话术，支持 `{{model}}` |
 | `TEXT` | 内置长文本 | 固定话术，支持 `{{model}}` `{{nonce}}` `{{id}}` `{{prompt_tokens}}` `{{datetime}}` |
 | `TPS` | `20` | 每秒多少个单位，`0` = 不限速 |
 | `TTFT_MS` | `300` | 首字延迟（毫秒） |

@@ -2,6 +2,23 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.1] - 2026-11-26
+
+### 新增
+
+- **未知模型名回显**：客户端用的 `model` 不在档位表里（比如线上真在用的 `gpt-4o-mini` / `claude-sonnet-4-5`）时，请求回落到新档位 `fake-echo`，它的默认话术里带着客户端请求的那个模型名——「客户端把 model 传错了」「baseURL 换成假上游了但模型名还是线上的」这类问题一眼就能看出来。
+- 落点可换：把 `DEFAULT_MODEL` 设成任意档位（如 `fake-manual`、`fake-tool`）；回显话术可用 `ECHO_TEXT` 改，支持 `{{model}}` 等模板变量。
+- 回落同时体现在：响应头 `x-fake-routed-model`、控制台会话列表的 `→ fake-echo` 标记、调用体检里的一条 warn、请求记录里的 `routedModel` 字段。
+- 控制台可以选「模型名不认识时回落到」哪个档位，并编辑回显话术。
+- 冒烟脚本新增「未知模型回显」检查（共 11 项）。
+
+### 变更
+
+- `DEFAULT_MODEL` 默认值从 `fake-fixed` 改为 `fake-echo`，并且**真的接进了路由**（之前它只影响 `/v1/models` 的列表内容）。
+- 未知模型名此前走 `MODE`（`fixed` / `manual` / `instant`）；现在要把 `DEFAULT_MODEL` 置空才会回到这条路。若你依赖 `MODE=manual` 让所有模型名都转人工，改成 `DEFAULT_MODEL=fake-manual` 效果一样。
+- `/v1/models/:id` 查不到模型时，错误信息里会提示调用时会被哪个档位接住。
+- 版本号升至 0.2.1。
+
 ## [0.2.0] - 2026-11-26
 
 ### 新增

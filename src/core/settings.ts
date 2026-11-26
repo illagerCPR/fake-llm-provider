@@ -9,6 +9,10 @@ export const DEFAULT_TEXT = `【假 LLM 提供商】收到请求了（nonce={{no
 第二段：如果客户端把 chunk 拼错了，这里就会出现重复或缺失。
 —— 完 ——`
 
+/** fake-echo 档位的默认话术：把客户端请求的模型名原样带回去，一眼看出客户端发了什么 */
+export const DEFAULT_ECHO_TEXT = `【假 LLM 提供商】你请求的模型「{{model}}」不是本服务提供的假模型名，已由 fake-echo 档位接住。
+可用的模型名见 GET /v1/models；如果你本来就想用这个名字做测试，忽略这段说明即可。`
+
 /** 剧本里的单步：覆盖某次调用的行为 */
 export const scriptStepSchema = z.object({
   kind: z.enum(['fixed', 'manual', 'instant', 'slow', 'fail', 'truncate', 'tool']).optional(),
@@ -50,8 +54,10 @@ export const settingsSchema = z.object({
   fallbackText: z.string().default('（人工回复超时，这是自动兜底的一段文字。）'),
   /** 非流式请求是否也模拟耗时 */
   simulateDuration: z.boolean().default(true),
-  /** 未知模型名落到哪个档位 */
-  defaultModel: z.string().default('fake-fixed'),
+  /** 模型名不在档位表里时落到哪个档位；空字符串 = 不回落（退回 mode） */
+  defaultModel: z.string().default('fake-echo'),
+  /** fake-echo 档位的默认话术，支持 {{model}}（= 请求里用的模型名） */
+  echoText: z.string().default(DEFAULT_ECHO_TEXT),
   /** 假工具调用的函数名 */
   toolName: z.string().default('get_weather'),
   /** 假工具调用的参数（JSON 字符串，按原样流式吐出） */
@@ -98,6 +104,7 @@ const ENV_MAP: Record<string, keyof Settings> = {
   FALLBACK_TEXT: 'fallbackText',
   SIMULATE_DURATION: 'simulateDuration',
   DEFAULT_MODEL: 'defaultModel',
+  ECHO_TEXT: 'echoText',
   TOOL_NAME: 'toolName',
   TOOL_ARGS: 'toolArgs',
   SCRIPT: 'script',

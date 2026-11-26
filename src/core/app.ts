@@ -125,7 +125,7 @@ export function createApp(deps: AppDeps): Hono {
         'access-control-allow-headers',
         'authorization, content-type, x-api-key, anthropic-version, x-admin-token, x-fake-kind, x-fake-tps, x-fake-ttft-ms, x-fake-status, x-fake-fail-after-tokens, x-fake-chunk-tokens',
       )
-      c.header('access-control-expose-headers', 'x-request-id, x-fake-session-id, x-fake-kind')
+      c.header('access-control-expose-headers', 'x-request-id, x-fake-session-id, x-fake-kind, x-fake-routed-model')
       c.header('access-control-max-age', '600')
     }
     if (c.req.method === 'OPTIONS') return c.body(null, 204)
@@ -160,7 +160,11 @@ export function createApp(deps: AppDeps): Hono {
     if (auth) return jsonError(c, adapter, 401, auth)
     const id = c.req.param('id')
     const info = modelInfos(settings).find((m) => m.id === id)
-    if (!info) return jsonError(c, adapter, 404, `模型 ${id} 不存在`)
+    if (!info) {
+      const fallback = MODEL_PROFILES.find((p) => p.id === settings.defaultModel)
+      const hint = fallback ? `；调用时这类名字会由 ${fallback.id} 接住` : ''
+      return jsonError(c, adapter, 404, `模型 ${id} 不存在${hint}`)
+    }
     return c.json(adapter.modelPayload(info) as never)
   })
 
@@ -352,6 +356,14 @@ async function handleChat(
     behavior = applyScriptStep(behavior, step, settings, index)
   }
   const lint = lintRequest({ request, headers, apiKeys: settings.apiKeys })
+  // 模型名不认识不拦截，但要在控制台一眼看到「客户端发了个别的名字」
+  if (behavior.fallbackFrom) {
+    lint.unshift({
+      level: 'warn',
+      label: `模型名 ${behavior.fallbackFrom} 不在档位表里，已回落到 ${behavior.fallbackTo}`,
+      detail: '回复话术里的 {{model}} 就是客户端发的这个名字；想换掉落点改 DEFAULT_MODEL',
+    })
+  }
 
   if (settings.strict) {
     const blocking = lint.find((item) => item.level === 'fail')
@@ -373,6 +385,7 @@ async function handleChat(
     path: c.req.path,
     method: c.req.method,
     model: request.model,
+    ...(behavior.fallbackTo ? { routedModel: behavior.fallbackTo } : {}),
     stream: request.stream,
     headers,
     body: request.raw,
@@ -401,6 +414,7 @@ async function handleChat(
     'x-request-id': id,
     'x-fake-session-id': key,
     'x-fake-kind': behavior.kind,
+    ...(behavior.fallbackTo ? { 'x-fake-routed-model': behavior.fallbackTo } : {}),
   }
 
   if (!request.stream) {
