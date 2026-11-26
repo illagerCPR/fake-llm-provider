@@ -3,9 +3,6 @@ dist
 dist-cf
 .git
 .github
-.wrangler
-.dev.vars
-.dev.vars.*
 .dsh-meow
 .data
 data

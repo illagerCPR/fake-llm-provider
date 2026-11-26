@@ -1,6 +1,6 @@
 import { DONE_FRAME } from '../sse'
 import type { Frame, NormalizedRequest, StopReason, Usage } from '../types'
-import type { ModelInfo, ProtocolAdapter, StreamInit } from './types'
+import type { ModelInfo, ProtocolAdapter, StreamInit, ToolSpec } from './types'
 import { asRecord, contentToText, readMessages } from './types'
 
 function num(value: unknown): number | undefined {
@@ -58,6 +58,48 @@ export const openaiAdapter: ProtocolAdapter = {
         data: JSON.stringify({
           ...chunkBase(init),
           choices: [{ index: 0, delta: { role: 'assistant', content: '' }, logprobs: null, finish_reason: null }],
+        }),
+      },
+    ]
+  },
+
+  streamToolStart(init: StreamInit, tool: ToolSpec, callId: string): Frame[] {
+    return [
+      {
+        kind: 'event',
+        data: JSON.stringify({
+          ...chunkBase(init),
+          choices: [
+            {
+              index: 0,
+              delta: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [{ index: 0, id: callId, type: 'function', function: { name: tool.name, arguments: '' } }],
+              },
+              logprobs: null,
+              finish_reason: null,
+            },
+          ],
+        }),
+      },
+    ]
+  },
+
+  streamToolDelta(fragment: string, init: StreamInit): Frame[] {
+    return [
+      {
+        kind: 'event',
+        data: JSON.stringify({
+          ...chunkBase(init),
+          choices: [
+            {
+              index: 0,
+              delta: { tool_calls: [{ index: 0, function: { arguments: fragment } }] },
+              logprobs: null,
+              finish_reason: null,
+            },
+          ],
         }),
       },
     ]
@@ -143,6 +185,34 @@ export const openaiAdapter: ProtocolAdapter = {
           logprobs: null,
           finish_reason:
             reason === 'length' ? 'length' : reason === 'tool_calls' ? 'tool_calls' : reason === 'content_filter' ? 'content_filter' : 'stop',
+        },
+      ],
+      usage: {
+        prompt_tokens: usage.inputTokens,
+        completion_tokens: usage.outputTokens,
+        total_tokens: usage.inputTokens + usage.outputTokens,
+      },
+    }
+  },
+
+  completeTool(tool: ToolSpec, callId: string, usage: Usage, init: StreamInit) {
+    const anyArgs = tool.arguments
+    return {
+      id: init.id,
+      object: 'chat.completion',
+      created: init.createdAt,
+      model: init.model,
+      system_fingerprint: 'fp_fake_llm',
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [{ id: callId, type: 'function', function: { name: tool.name, arguments: anyArgs } }],
+          },
+          logprobs: null,
+          finish_reason: 'tool_calls',
         },
       ],
       usage: {

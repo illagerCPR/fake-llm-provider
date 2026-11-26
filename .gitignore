@@ -7,11 +7,6 @@ dist/
 dist-cf/
 *.tsbuildinfo
 
-# cloudflare
-.wrangler/
-.dev.vars
-.dev.vars.*
-
 # runtime data
 .data/
 data/

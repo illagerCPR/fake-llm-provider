@@ -1,17 +1,17 @@
 # 假 LLM 提供商 · fake-llm-provider
 
-> A controllable fake LLM upstream for integration testing — OpenAI & Anthropic compatible, fixed or human-typed replies, adjustable tokens-per-second, deployable to Docker and Cloudflare Workers.
+> A controllable fake LLM upstream for integration testing — OpenAI & Anthropic compatible, fixed or human-typed replies, adjustable tokens-per-second, fake tool calls, scripted failures.
 
-给「调用 LLM 的服务」准备一个**完全可控的假上游**：它不会真的推理，但会把流式协议、鉴权、错误码、超时、断流这些边角料演得足够真，让你能安心验证自己的客户端/服务有没有写对。
+给「调用 LLM 的服务」准备一个**完全可控的假上游**：它不会真的推理，但会把流式协议、鉴权、错误码、超时、断流、工具调用这些边角料演得足够真，让你能安心验证自己的客户端/服务有没有写对。
 
-它解决四件事：
+它解决六件事：
 
 1. **回复内容可控**：固定话术，或者由你在浏览器控制台里一段段手打（打字慢也没关系，中间有保活）。
-2. **回复速度可控**：按 Token/s 精确节拍，首字延迟也能调。
-3. **故障可控**：500 / 429 / 慢首字 / 半截断流 / 客户端超时，一个模型名就能切。
-4. **两边都能跑**：同一个 Docker 镜像，或者同一份代码部署到 Cloudflare Workers。
-
-兼容 OpenAI（`/v1/chat/completions`、`/v1/models`、`/v1/embeddings`）与 Anthropic（`/v1/messages`、`count_tokens`）两套协议，官方 SDK 已在测试里跑通。
+2. **回复速度可控**：按 Token/s 精确节拍，首字延迟也能调；token 数用 o200k 真词表算，和客户端统计对得上。
+3. **工具调用可控**：返回一个假的 `tool_calls` / `tool_use`，参数按流式分片吐出，方便测 Agent 的工具链路。
+4. **失败可以编排**：先 429 再成功、半截断流、慢首字，一个模型名就能切。
+5. **一套协议两副面孔**：OpenAI 与 Anthropic 双兼容，官方 SDK 已在测试里跑通。
+6. **随手能起**：一个 Node 进程 / 一个 Docker 容器，内存态、零外部依赖。
 
 ---
 
@@ -23,15 +23,7 @@
 docker run -d --name fake-llm -p 8080:8080 \
   -e ADMIN_TOKEN=change-me \
   -e TPS=20 \
-  fake-llm-provider:0.1.0
-```
-
-发布版镜像也可以直接拉（GitHub Release 时构建多架构版本）：
-
-```bash
-docker run -d --name fake-llm -p 8080:8080 \
-  -e ADMIN_TOKEN=change-me \
-  ghcr.io/illagercpr/fake-llm-provider:0.1.0
+  ghcr.io/illagercpr/fake-llm-provider:0.2.0
 ```
 
 或者直接：
@@ -41,17 +33,6 @@ docker compose up -d
 ```
 
 打开 <http://127.0.0.1:8080/admin/>，输入 `ADMIN_TOKEN` 就能看到控制台。
-
-### Cloudflare Workers
-
-```bash
-pnpm install
-pnpm build                    # 先构建管理台
-npx wrangler secret put ADMIN_TOKEN
-npx wrangler deploy
-```
-
-部署后把客户端指向你的域名即可；没配 `ADMIN_TOKEN` 时管理台会被**主动关闭**（只留 `/v1`），避免公网裸奔。
 
 ### 从源码运行
 
@@ -119,6 +100,8 @@ curl -N http://127.0.0.1:8080/v1/chat/completions \
 |---|---|
 | `fake-fixed` | 按配置话术与 TPS 正常流式输出 |
 | `fake-manual` | 进入人工回复，挂在控制台等你打字 |
+| `fake-tool` | 返回一个假的 `tool_calls` / `tool_use`（函数名与参数可配） |
+| `fake-script` | 按调用次数执行剧本（默认第一次 429、第二次成功） |
 | `fake-instant` | 一次性吐完，没有节拍（检验客户端是否真的在增量处理） |
 | `fake-slow` | 首字延迟 30 秒，用来打客户端超时/重试 |
 | `fake-fail` | 直接返回错误体（默认 500，可调） |
@@ -142,9 +125,11 @@ curl -N http://127.0.0.1:8080/v1/chat/completions \
 
 也可以用请求头 `X-Fake-TPS` / `X-Fake-Kind` / `X-Fake-TTFT-Ms`。
 
-**单位可选**：`token`（CJK 感知的近似计数：汉字 1、拉丁约 4 字符 1）、`char`（按字）、`word`（按词）。服务端会给每个分包打时间戳，控制台上显示的「实测 TPS」就是拿它算的，方便你和客户端自己统计的数字对账。
+**切分单位**可选 `token`（CJK 感知）/ `char`（按字）/ `word`（按词）。
 
-节拍用的是**绝对时间表**（目标时刻 = 起点 + 已发数 / TPS），不是循环 sleep，所以长时间跑也不会越跑越慢；高 TPS 时会自动合批，不会一个 token 一个 SSE 包。
+**计数方式**默认 `tiktoken`（o200k_base 真词表）：`usage` 里的 `prompt_tokens` / `completion_tokens` 与客户端用 tiktoken 数出来的结果一致；切到 `heuristic` 则用零依赖的估算，快但不等同于任何真词表。
+
+节拍用的是**绝对时间表**（目标时刻 = 起点 + 已发数 / TPS），不是循环 sleep，所以长时间跑也不会越跑越慢；高 TPS 时会自动合批，不会一个 token 一个 SSE 包。控制台显示的「实测 TPS」是拿真实发送时刻和真实 token 数算的。
 
 ---
 
@@ -162,6 +147,54 @@ curl -N http://127.0.0.1:8080/v1/chat/completions \
 
 ---
 
+## 工具调用（Agent 链路测试）
+
+让模型返回一个工具调用，而不是文本：
+
+```python
+client.chat.completions.create(
+    model="fake-tool",
+    messages=[{"role": "user", "content": "今天天气如何"}],
+    tools=[{"type": "function", "function": {"name": "get_weather", "parameters": {...}}}],
+)
+```
+
+返回 `finish_reason="tool_calls"`，`message.tool_calls[0]` 里是 `get_weather` 和参数 JSON。流式时参数会被切成多片 `function.arguments`，客户端需要自己拼接——这正是要验证的地方。
+
+Anthropic 侧同样是 `tool_use` 块（流式是 `input_json_delta` 分片，`stop_reason="tool_use"`）。
+
+函数名和参数在控制台「高级设置」里改，也能按请求临时覆盖：
+
+```json
+{"model":"fake-tool","messages":[...],
+ "fake":{"toolName":"lookup_order","toolArgs":"{\"id\":\"A-1\"}"}}
+```
+
+---
+
+## 按调用序列的剧本
+
+同一模型按调用次数返回不同结果，用来测重试策略：
+
+| 第几次调用 | 剧本说 |
+|---|---|
+| 1 | 429 限流 |
+| 2 起 | 正常返回 |
+
+开箱即用：`model="fake-script"` 就是「先 429、再成功」。想自己编排，在控制台「剧本」里写 JSON 数组，或者按请求覆盖：
+
+```json
+{"model":"fake-script","messages":[...],
+ "fake":{"script":[
+   {"kind":"fail","status":503,"note":"上游抽风"},
+   {"kind":"instant","text":"重试成功了"}
+ ]}}
+```
+
+每一步可以覆盖 `kind` / `text` / `tps` / `ttftMs` / `status` / `toolName` / `toolArgs`。控制台里能看到每个模型已经被调用了几次，也能一键重置计数。
+
+---
+
 ## 故障注入
 
 ```jsonc
@@ -170,7 +203,7 @@ POST /v1/chat/completions
   "model": "fake-fixed",
   "messages": [...],
   "fake": {
-    "kind": "fail",          // fixed / manual / instant / slow / fail / truncate
+    "kind": "fail",          // fixed / manual / instant / slow / fail / truncate / tool / script
     "status": 429,           // fail 档位返回的状态码
     "tps": 2,
     "ttftMs": 30000,
@@ -209,16 +242,20 @@ POST /v1/chat/completions
 | `TPS` | `20` | 每秒多少个单位，`0` = 不限速 |
 | `TTFT_MS` | `300` | 首字延迟（毫秒） |
 | `UNIT` | `token` | `token` / `char` / `word` |
+| `TOKENIZER` | `tiktoken` | `tiktoken`（o200k 真词表）/ `heuristic`（估算） |
 | `CHUNK_TOKENS` | `0` | 单个 SSE 包最多多少 token，0 = 自动（约 40ms 的量） |
+| `TOOL_NAME` | `get_weather` | 假工具调用的函数名 |
+| `TOOL_ARGS` | `{"city":"上海","unit":"celsius"}` | 假工具调用的参数 JSON |
+| `SCRIPT` | 空 | 剧本 JSON 数组（`fake-script` 档位用） |
 | `HEARTBEAT_MS` | `10000` | 人工等待时的保活间隔 |
 | `HEARTBEAT_STYLE` | `comment` | `comment` / `empty-delta` / `off` |
 | `MANUAL_TIMEOUT_MS` | `180000` | 人工空等上限 |
 | `ON_MANUAL_TIMEOUT` | `fallback` | `fallback` / `abort` / `hold` |
 | `API_KEYS` | 空 | 逗号分隔；非空时校验 `Authorization: Bearer` / `x-api-key` |
-| `ADMIN_TOKEN` | 空 | 控制台口令；Workers 上留空 = 控制台关闭 |
+| `ADMIN_TOKEN` | 空 | 控制台口令；留空则控制台不需要口令（只适合本机） |
 | `CORS` | `*` | 允许的来源，`none` = 不发 CORS 头 |
 | `DATA_DIR` | 空 | 非空时把请求记录追加到 `requests.jsonl` |
-| `PORT` / `HOST` | `8080` / `0.0.0.0` | Node 监听地址 |
+| `PORT` / `HOST` | `8080` / `0.0.0.0` | 监听地址 |
 | `LOG_LIMIT` | `200` | 保留多少条请求记录 |
 | `STRICT` | `false` | 体检不合格是否直接 400 |
 
@@ -228,9 +265,9 @@ POST /v1/chat/completions
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/v1/chat/completions` | OpenAI 兼容，流式 / 非流式 |
-| POST | `/v1/messages` | Anthropic 兼容，流式 / 非流式 |
-| POST | `/v1/messages/count_tokens` | Anthropic token 计数 |
+| POST | `/v1/chat/completions` | OpenAI 兼容，流式 / 非流式，支持 tool_calls |
+| POST | `/v1/messages` | Anthropic 兼容，流式 / 非流式，支持 tool_use |
+| POST | `/v1/messages/count_tokens` | Anthropic token 计数（用同一套 tokenizer） |
 | GET | `/v1/models` | 模型列表（按 `anthropic-version` / `x-api-key` 头返回对应形状） |
 | POST | `/v1/embeddings` | 确定性伪向量（同输入同输出） |
 | GET | `/healthz` | 健康检查 |
@@ -244,14 +281,17 @@ POST /v1/chat/completions
 **实测 TPS 和设置值差几个百分点？**
 正常。定时器有精度上限，服务端按「落后就一次多发」追赶，长期平均是准的；控制台的「实测 TPS」是拿实际发送时刻算的，可以拿来对账。
 
+**usage 里的 token 数和客户端数出来的不一样？**
+确认双方用的是同一个词表：本项目默认 `tiktoken`（o200k_base）。Anthropic 客户端一般是自己的 tokenizer，数字本来就会不一样。
+
 **控制台一直提示 401 / 403？**
-`ADMIN_TOKEN` 没配对（或 Workers 上没配置）。改了环境变量要重启容器；Workers 上重新 `wrangler secret put` 后会自动生效。
+`ADMIN_TOKEN` 没配对。改了环境变量要重启容器。
 
 **客户端说「connection reset」/ 收不到 `[DONE]`？**
 你大概率用了 `fake-truncate` 或点了「掐断连接」——这正是它要模拟的东西。
 
 **能当压测工具用吗？**
-不建议。它是单进程内存态（Workers 上是单 Durable Object），几百路并发没问题，但不是为了打满 QPS 设计的。
+不建议。它是单进程内存态，几百路并发没问题，但不是为了打满 QPS 设计的。
 
 ---
 
@@ -260,10 +300,10 @@ POST /v1/chat/completions
 架构与设计取舍见 [docs/DESIGN.md](docs/DESIGN.md)，发布记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ```bash
-pnpm typecheck    # 三套 tsconfig：Node / Worker / 管理台
+pnpm typecheck    # Node 与管理台两套 tsconfig
 pnpm test         # 单元 + 集成 + 官方 SDK 契约测试
 pnpm build        # 管理台 + Node 单文件产物
-pnpm cf:dev       # 本地 workerd（含 DO），无需账号
+pnpm smoke        # 对已运行的实例跑冒烟（需 SMOKE_BASE_URL）
 ```
 
 ## License

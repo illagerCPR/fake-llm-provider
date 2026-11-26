@@ -11,7 +11,7 @@ export type UnitMode = 'char' | 'token' | 'word'
 export type ReplyMode = 'fixed' | 'manual' | 'instant'
 
 /** 档位：由模型名或请求参数指定 */
-export type ProfileKind = 'fixed' | 'manual' | 'instant' | 'slow' | 'fail' | 'truncate'
+export type ProfileKind = 'fixed' | 'manual' | 'instant' | 'slow' | 'fail' | 'truncate' | 'tool' | 'script'
 
 /** 停止原因（两种协议各自映射） */
 export type StopReason =

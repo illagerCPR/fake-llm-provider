@@ -67,6 +67,33 @@ describe('OpenAI SDK 契约', () => {
     expect(usage?.total_tokens).toBeGreaterThan(0)
   })
 
+  it('SDK 能解析 tool_calls（非流式）', async () => {
+    const completion = await client().chat.completions.create({
+      model: 'fake-tool',
+      messages: [{ role: 'user', content: '今天天气如何' }],
+    })
+    const call = completion.choices[0]?.message.tool_calls?.[0]
+    expect(call?.type).toBe('function')
+    if (call?.type !== 'function') throw new Error('期望是 function 类型的工具调用')
+    expect(call.function.name).toBe('get_weather')
+    expect(JSON.parse(call.function.arguments)).toEqual({ city: '上海', unit: 'celsius' })
+    expect(completion.choices[0]?.finish_reason).toBe('tool_calls')
+  })
+
+  it('SDK 能拼接流式 tool_calls 参数', async () => {
+    const stream = await client().chat.completions.create({
+      model: 'fake-tool',
+      messages: [{ role: 'user', content: '今天天气如何' }],
+      stream: true,
+    })
+    let args = ''
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta?.tool_calls?.[0]
+      if (delta?.function?.arguments) args += delta.function.arguments
+    }
+    expect(JSON.parse(args)).toEqual({ city: '上海', unit: 'celsius' })
+  })
+
   it('models.list 可用', async () => {
     const models = await client().models.list()
     expect(models.data.some((m) => m.id === 'fake-manual')).toBe(true)
@@ -118,6 +145,21 @@ describe('Anthropic SDK 契约', () => {
     const final = await stream.finalMessage()
     expect(text).toBe('你好，世界。Hello world!')
     expect(final.stop_reason).toBe('end_turn')
+  })
+
+  it('SDK 能解析 tool_use', async () => {
+    const message = await client().messages.create({
+      model: 'fake-tool',
+      max_tokens: 64,
+      messages: [{ role: 'user', content: '今天天气如何' }],
+    })
+    const block = message.content[0]
+    expect(block?.type).toBe('tool_use')
+    if (block?.type === 'tool_use') {
+      expect(block.name).toBe('get_weather')
+      expect(block.input).toEqual({ city: '上海', unit: 'celsius' })
+    }
+    expect(message.stop_reason).toBe('tool_use')
   })
 
   it('count_tokens 可用', async () => {

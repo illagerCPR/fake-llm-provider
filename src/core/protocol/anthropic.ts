@@ -1,5 +1,5 @@
 import type { Frame, NormalizedRequest, StopReason, Usage } from '../types'
-import type { ModelInfo, ProtocolAdapter, StreamInit } from './types'
+import type { ModelInfo, ProtocolAdapter, StreamInit, ToolSpec } from './types'
 import { asRecord, contentToText, readMessages } from './types'
 
 function num(value: unknown): number | undefined {
@@ -83,6 +83,42 @@ export const anthropicAdapter: ProtocolAdapter = {
     ]
   },
 
+  streamToolStart(init: StreamInit, tool: ToolSpec, callId: string): Frame[] {
+    return [
+      {
+        kind: 'event',
+        event: 'message_start',
+        data: JSON.stringify({
+          type: 'message_start',
+          message: messageFor(init, { inputTokens: init.promptTokens, outputTokens: 0 }),
+        }),
+      },
+      {
+        kind: 'event',
+        event: 'content_block_start',
+        data: JSON.stringify({
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'tool_use', id: callId, name: tool.name, input: {} },
+        }),
+      },
+    ]
+  },
+
+  streamToolDelta(fragment: string, _init: StreamInit): Frame[] {
+    return [
+      {
+        kind: 'event',
+        event: 'content_block_delta',
+        data: JSON.stringify({
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'input_json_delta', partial_json: fragment },
+        }),
+      },
+    ]
+  },
+
   streamDelta(text: string, _init: StreamInit): Frame[] {
     return [
       {
@@ -137,6 +173,25 @@ export const anthropicAdapter: ProtocolAdapter = {
       model: init.model,
       content: [{ type: 'text', text }],
       stop_reason: mapStopReason(reason),
+      stop_sequence: null,
+      usage: { input_tokens: usage.inputTokens, output_tokens: usage.outputTokens },
+    }
+  },
+
+  completeTool(tool: ToolSpec, callId: string, usage: Usage, init: StreamInit) {
+    let input: unknown
+    try {
+      input = JSON.parse(tool.arguments)
+    } catch {
+      input = { _raw: tool.arguments }
+    }
+    return {
+      id: init.id,
+      type: 'message',
+      role: 'assistant',
+      model: init.model,
+      content: [{ type: 'tool_use', id: callId, name: tool.name, input }],
+      stop_reason: 'tool_use',
       stop_sequence: null,
       usage: { input_tokens: usage.inputTokens, output_tokens: usage.outputTokens },
     }

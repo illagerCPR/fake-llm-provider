@@ -5,6 +5,7 @@ import type { Session } from './session'
 import type { Settings } from './settings'
 import { expandTemplate, nowStamp } from './templates'
 import { takeTokens } from './tokenize'
+import { countWith, createCounter } from './tokenizer'
 import type { Frame, StopReason, Usage } from './types'
 
 export interface ReplyResult {
@@ -27,7 +28,7 @@ export interface ReplyContext {
   onHeartbeat?: () => void
 }
 
-function templateVars(session: Session, settings: Settings): Record<string, string | number> {
+function templateVars(session: Session): Record<string, string | number> {
   return {
     model: session.model,
     nonce: session.nonce,
@@ -39,21 +40,25 @@ function templateVars(session: Session, settings: Settings): Record<string, stri
 }
 
 /**
- * 真正的"吐字"过程：固定话术走节拍器，人工模式等人推。
+ * 真正的"吐字"过程：固定话术走节拍器，人工模式等人推，工具档位吐的是参数 JSON。
  * 不负责发帧、不负责收尾状态——那些交给调用方，便于流式/非流式复用。
  */
 export async function runReply(ctx: ReplyContext): Promise<ReplyResult> {
   const { session, behavior, settings } = ctx
   const startedAt = ctx.now()
   const parts: string[] = []
+  const counter = createCounter(settings.tokenizer, settings.unit)
   let tokens = 0
   let truncated = false
   let reason: StopReason = 'stop'
 
-  const emit = (text: string, tk: number) => {
+  // 精确计数交给 counter（tiktoken 会处理分包接缝处的合并），节拍器只负责发
+  const emit = (text: string) => {
+    const total = counter.append(text)
+    const delta = total - tokens
+    tokens = total
     parts.push(text)
-    tokens += tk
-    ctx.onDelta(text, tk)
+    ctx.onDelta(text, delta)
   }
 
   const paceChunk = (text: string) =>
@@ -62,6 +67,7 @@ export async function runReply(ctx: ReplyContext): Promise<ReplyResult> {
       tps: behavior.tps,
       unit: settings.unit,
       chunkTokens: behavior.chunkTokens,
+      totalTokens: countWith(settings.tokenizer, text, settings.unit),
       now: ctx.now,
       sleep: ctx.sleep,
       emit,
@@ -79,7 +85,7 @@ export async function runReply(ctx: ReplyContext): Promise<ReplyResult> {
       if (command) {
         if (command.type === 'say') {
           idleSince = ctx.now()
-          await paceChunk(expandTemplate(command.text, templateVars(session, settings)))
+          await paceChunk(expandTemplate(command.text, templateVars(session)))
           idleSince = ctx.now()
           continue
         }
@@ -115,8 +121,13 @@ export async function runReply(ctx: ReplyContext): Promise<ReplyResult> {
       reason = 'stop'
       break
     }
+    case 'tool': {
+      await paceChunk(behavior.toolCall?.arguments ?? '{}')
+      reason = 'tool_calls'
+      break
+    }
     case 'truncate': {
-      const partial = takeTokens(expandTemplate(behavior.text, templateVars(session, settings)), settings.unit, behavior.failAfterTokens)
+      const partial = takeTokens(expandTemplate(behavior.text, templateVars(session)), settings.unit, behavior.failAfterTokens)
       const result = await paceChunk(partial.text)
       truncated = !result.aborted
       reason = 'aborted'
@@ -127,7 +138,7 @@ export async function runReply(ctx: ReplyContext): Promise<ReplyResult> {
       break
     }
     default: {
-      const text = expandTemplate(behavior.text, templateVars(session, settings))
+      const text = expandTemplate(behavior.text, templateVars(session))
       const result = await paceChunk(text)
       reason = result.aborted ? 'aborted' : 'stop'
       break
@@ -168,6 +179,8 @@ export function buildStreamInit(session: Session, includeUsage: boolean): Stream
 /** 流式：发首帧 → 吐字 → 收尾；掐断时故意不发结束帧 */
 export async function driveStream(ctx: DriveStreamContext): Promise<void> {
   const { session, adapter, behavior } = ctx
+  const tool = behavior.toolCall
+  const callId = `call_fake_${session.nonce}`
   const emitFrames = (frames: Frame[]) => {
     for (const frame of frames) ctx.emit(frame)
   }
@@ -176,7 +189,8 @@ export async function driveStream(ctx: DriveStreamContext): Promise<void> {
   if (behavior.kind !== 'manual' && behavior.ttftMs > 0) await ctx.sleep(behavior.ttftMs)
 
   session.markStarted(ctx.now())
-  emitFrames(adapter.streamStart(ctx.init))
+  if (tool) emitFrames(adapter.streamToolStart(ctx.init, tool, callId))
+  else emitFrames(adapter.streamStart(ctx.init))
 
   const usage: Usage = { inputTokens: session.promptTokens, outputTokens: 0 }
   const result = await runReply({
@@ -189,7 +203,7 @@ export async function driveStream(ctx: DriveStreamContext): Promise<void> {
     onDelta: (text, tokens) => {
       usage.outputTokens += tokens
       session.appendEmitted(text, tokens)
-      emitFrames(adapter.streamDelta(text, ctx.init))
+      emitFrames(tool ? adapter.streamToolDelta(text, ctx.init) : adapter.streamDelta(text, ctx.init))
     },
     onHeartbeat: () => {
       const heartbeat = adapter.streamHeartbeat(ctx.settings.heartbeatStyle)
@@ -221,6 +235,8 @@ export async function completeOnce(ctx: CompleteContext): Promise<unknown> {
   const { session, adapter, settings } = ctx
   // 非流式默认也模拟"生成耗时"，方便测超时；关掉 simulateDuration 就立即返回
   const behavior = settings.simulateDuration ? ctx.behavior : { ...ctx.behavior, tps: 0, ttftMs: 0 }
+  const tool = behavior.toolCall
+  const callId = `call_fake_${session.nonce}`
 
   if (behavior.ttftMs > 0) await ctx.sleep(behavior.ttftMs)
   session.markStarted(ctx.now())
@@ -238,7 +254,13 @@ export async function completeOnce(ctx: CompleteContext): Promise<unknown> {
     },
   })
 
-  const reason: StopReason = result.truncated ? 'length' : result.reason === 'aborted' ? 'stop' : result.reason
+  const reason: StopReason = tool
+    ? 'tool_calls'
+    : result.truncated
+      ? 'length'
+      : result.reason === 'aborted'
+        ? 'stop'
+        : result.reason
   session.markFinished(reason)
-  return adapter.complete(result.text, reason, usage, ctx.init)
+  return tool ? adapter.completeTool(tool, callId, usage, ctx.init) : adapter.complete(result.text, reason, usage, ctx.init)
 }

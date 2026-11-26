@@ -8,6 +8,8 @@ export interface PaceOptions {
   unit: UnitMode
   /** 单个分包最多带多少 token；0/undefined = 按 TPS 自动（约 40ms 的量） */
   chunkTokens?: number
+  /** 这段文本的精确 token 总数（tiktoken 模式下传入，节拍按它等比缩放） */
+  totalTokens?: number
   now?: () => number
   sleep?: (ms: number) => Promise<void>
   signal?: AbortSignal
@@ -41,7 +43,11 @@ export async function paceText(options: PaceOptions): Promise<PaceResult> {
   const now = options.now ?? defaultNow
   const sleep = options.sleep ?? defaultSleep
   const units = splitUnits(options.text, options.unit)
-  const totalTokens = units.reduce((sum, unit) => sum + unit.tokens, 0)
+  const heuristicTotal = units.reduce((sum, unit) => sum + unit.tokens, 0)
+  // 精确 token 数已知时，把每段权重等比缩放，速度按真 token 走
+  const scale = options.totalTokens && options.totalTokens > 0 && heuristicTotal > 0 ? options.totalTokens / heuristicTotal : 1
+  const weights = units.map((unit) => unit.tokens * scale)
+  const totalTokens = weights.reduce((sum, weight) => sum + weight, 0)
   const startedAt = now()
 
   if (units.length === 0) {
@@ -103,9 +109,10 @@ export async function paceText(options: PaceOptions): Promise<PaceResult> {
       const dueAt = startedAt + emitted * msPerToken
       if (dueAt > at) break
       const unit = units[cursor]!
+      const weight = weights[cursor] ?? unit.tokens
       pending += unit.text
-      pendingTokens += unit.tokens
-      emitted += unit.tokens
+      pendingTokens += weight
+      emitted += weight
       cursor += 1
       if (pendingTokens >= chunkLimit) break
     }

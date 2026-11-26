@@ -9,6 +9,20 @@ export const DEFAULT_TEXT = `【假 LLM 提供商】收到请求了（nonce={{no
 第二段：如果客户端把 chunk 拼错了，这里就会出现重复或缺失。
 —— 完 ——`
 
+/** 剧本里的单步：覆盖某次调用的行为 */
+export const scriptStepSchema = z.object({
+  kind: z.enum(['fixed', 'manual', 'instant', 'slow', 'fail', 'truncate', 'tool']).optional(),
+  text: z.string().optional(),
+  tps: z.number().min(0).max(100_000).optional(),
+  ttftMs: z.number().min(0).max(600_000).optional(),
+  status: z.number().int().min(200).max(599).optional(),
+  toolName: z.string().optional(),
+  toolArgs: z.string().optional(),
+  note: z.string().optional(),
+})
+
+export type ScriptStep = z.infer<typeof scriptStepSchema>
+
 export const settingsSchema = z.object({
   /** 默认回复来源 */
   mode: z.enum(['fixed', 'manual', 'instant']).default('fixed'),
@@ -20,6 +34,8 @@ export const settingsSchema = z.object({
   ttftMs: z.number().min(0).max(600_000).default(300),
   /** 切分单位 */
   unit: z.enum(['char', 'token', 'word']).default('token'),
+  /** token 计数方式 */
+  tokenizer: z.enum(['tiktoken', 'heuristic']).default('tiktoken'),
   /** 单个 SSE 分包最多携带多少 token，0 = 按 TPS 自动 */
   chunkTokens: z.number().min(0).max(8192).default(0),
   /** 人工回复等待时的心跳间隔 */
@@ -36,6 +52,12 @@ export const settingsSchema = z.object({
   simulateDuration: z.boolean().default(true),
   /** 未知模型名落到哪个档位 */
   defaultModel: z.string().default('fake-fixed'),
+  /** 假工具调用的函数名 */
+  toolName: z.string().default('get_weather'),
+  /** 假工具调用的参数（JSON 字符串，按原样流式吐出） */
+  toolArgs: z.string().default('{"city":"上海","unit":"celsius"}'),
+  /** 剧本：按调用次数依次生效（fake-script 档位用） */
+  script: z.array(scriptStepSchema).default([]),
   /** 允许的 API Key，空数组 = 不校验 */
   apiKeys: z.array(z.string()).default([]),
   /** CORS 允许的来源 */
@@ -67,6 +89,7 @@ const ENV_MAP: Record<string, keyof Settings> = {
   TPS: 'tps',
   TTFT_MS: 'ttftMs',
   UNIT: 'unit',
+  TOKENIZER: 'tokenizer',
   CHUNK_TOKENS: 'chunkTokens',
   HEARTBEAT_MS: 'heartbeatMs',
   HEARTBEAT_STYLE: 'heartbeatStyle',
@@ -75,6 +98,9 @@ const ENV_MAP: Record<string, keyof Settings> = {
   FALLBACK_TEXT: 'fallbackText',
   SIMULATE_DURATION: 'simulateDuration',
   DEFAULT_MODEL: 'defaultModel',
+  TOOL_NAME: 'toolName',
+  TOOL_ARGS: 'toolArgs',
+  SCRIPT: 'script',
   API_KEYS: 'apiKeys',
   CORS: 'cors',
   LOG_LIMIT: 'logLimit',
@@ -95,6 +121,10 @@ export function settingsFromEnv(env: Record<string, string | undefined>): Partia
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean)
+      continue
+    }
+    if (field === 'script') {
+      out[field] = JSON.parse(raw)
       continue
     }
     if (field === 'simulateDuration' || field === 'strict') {

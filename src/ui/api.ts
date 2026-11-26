@@ -1,9 +1,21 @@
+export interface ScriptStep {
+  kind?: 'fixed' | 'manual' | 'instant' | 'slow' | 'fail' | 'truncate' | 'tool'
+  text?: string
+  tps?: number
+  ttftMs?: number
+  status?: number
+  toolName?: string
+  toolArgs?: string
+  note?: string
+}
+
 export interface Settings {
   mode: 'fixed' | 'manual' | 'instant'
   text: string
   tps: number
   ttftMs: number
   unit: 'char' | 'token' | 'word'
+  tokenizer: 'tiktoken' | 'heuristic'
   chunkTokens: number
   heartbeatMs: number
   heartbeatStyle: 'comment' | 'empty-delta' | 'off'
@@ -12,6 +24,9 @@ export interface Settings {
   fallbackText: string
   simulateDuration: boolean
   defaultModel: string
+  toolName: string
+  toolArgs: string
+  script: ScriptStep[]
   apiKeys: string[]
   cors: string
   logLimit: number
@@ -79,6 +94,7 @@ export interface StatePayload {
   models: ModelCard[]
   version: string
   runtime: string
+  scriptCounters: Record<string, number>
   bootedAt: number
   serverNow: number
 }
@@ -142,6 +158,7 @@ export const api = {
       body: JSON.stringify({ text }),
     }),
   finish: (key: string) => request<{ ok: boolean }>(`/admin/api/sessions/${key}/finish`, { method: 'POST' }),
+  resetScripts: () => request<{ ok: boolean }>('/admin/api/script/reset', { method: 'POST' }),
   abort: (key: string, reason: string) =>
     request<{ ok: boolean }>(`/admin/api/sessions/${key}/abort`, {
       method: 'POST',

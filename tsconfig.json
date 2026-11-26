@@ -28,10 +28,7 @@
   ],
   "exclude": [
     "src/ui/**",
-    "src/runtime/worker.ts",
-    "src/runtime/durable-hub.ts",
     "node_modules",
-    "dist",
-    "dist-cf"
+    "dist"
   ]
 }

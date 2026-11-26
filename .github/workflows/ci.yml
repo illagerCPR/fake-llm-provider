@@ -31,9 +31,6 @@ jobs:
       - name: 构建产物
         run: pnpm build
 
-      - name: Worker 打包校验
-        run: pnpm cf:dry
-
   docker:
     runs-on: ubuntu-latest
     steps:

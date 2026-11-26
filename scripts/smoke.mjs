@@ -5,7 +5,7 @@
  *   SMOKE_BASE_URL=http://127.0.0.1:8080 ADMIN_TOKEN=xxx node scripts/smoke.mjs
  *
  * 覆盖：健康检查、模型列表（两种形状）、非流式、流式、Anthropic 流式、
- * 错误档位、人工回复（需要 ADMIN_TOKEN）。
+ * 错误档位、工具调用、剧本、人工回复（后两项需要 ADMIN_TOKEN）。
  */
 
 const BASE = (process.env.SMOKE_BASE_URL ?? process.argv[2] ?? 'http://127.0.0.1:8080').replace(/\/$/, '')
@@ -180,7 +180,46 @@ async function main() {
   })
   check('错误档位返回 500', failResponse.status === 500 && failResponse.body?.error?.type === 'server_error', `status=${failResponse.status}`)
 
-  // 7. 人工回复
+  // 7. 工具调用
+  const toolCall = await jsonFetch('/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'fake-tool',
+      messages: [{ role: 'user', content: 'weather?' }],
+      fake: { toolName: 'lookup_city', toolArgs: '{"city":"杭州"}' },
+    }),
+  })
+  const call = toolCall.body?.choices?.[0]?.message?.tool_calls?.[0]
+  check(
+    '工具调用',
+    toolCall.status === 200 &&
+      call?.function?.name === 'lookup_city' &&
+      JSON.parse(call?.function?.arguments ?? '{}').city === '杭州' &&
+      toolCall.body?.choices?.[0]?.finish_reason === 'tool_calls',
+    `finish=${toolCall.body?.choices?.[0]?.finish_reason}`,
+  )
+
+  // 8. 剧本（需要管理台权限来重置计数）
+  if (!ADMIN_TOKEN) {
+    console.log('  - 跳过剧本测试（未提供 ADMIN_TOKEN）')
+  } else {
+    await jsonFetch('/admin/api/script/reset', { method: 'POST' })
+    const first = await jsonFetch('/v1/chat/completions', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'fake-script', messages: [{ role: 'user', content: 'retry me' }] }),
+    })
+    const second = await jsonFetch('/v1/chat/completions', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'fake-script', messages: [{ role: 'user', content: 'retry me' }] }),
+    })
+    check(
+      '剧本（429 → 200）',
+      first.status === 429 && second.status === 200,
+      `${first.status} → ${second.status}`,
+    )
+  }
+
+  // 9. 人工回复
   if (!ADMIN_TOKEN) {
     console.log('  - 跳过人工回复测试（未提供 ADMIN_TOKEN）')
   } else {

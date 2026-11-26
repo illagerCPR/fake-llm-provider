@@ -3,20 +3,20 @@ import type { Context } from 'hono'
 import { buildStreamInit, completeOnce, driveStream } from './driver'
 import type { SessionHub } from './hub'
 import { hasBlockingLint, lintRequest } from './lint'
-import { MODEL_PROFILES, modelInfos, resolveBehavior } from './models'
+import { DEFAULT_SCRIPT, MODEL_PROFILES, applyScriptStep, modelInfos, resolveBehavior } from './models'
 import { anthropicAdapter } from './protocol/anthropic'
 import { openaiAdapter } from './protocol/openai'
 import { asRecord, type ProtocolAdapter } from './protocol/types'
 import { Session } from './session'
-import type { Settings } from './settings'
+import { scriptStepSchema, type Settings, type ScriptStep } from './settings'
 import { STREAM_HEADERS, serializeFrame } from './sse'
 import { expandTemplate } from './templates'
-import { countTokens } from './tokenize'
+import { countWith } from './tokenizer'
 import type { Frame, NormalizedRequest, Protocol, RequestRecord } from './types'
 
 export interface AppEnv {
   version: string
-  runtime: 'node' | 'workers'
+  runtime: string
   adminToken?: string
   /** 没配 ADMIN_TOKEN 时是否放行管理台：本地 true，公网 false */
   allowAdminWithoutToken: boolean
@@ -98,10 +98,21 @@ function fakeVector(text: string, dims: number): number[] {
   return out
 }
 
+/** 剧本来源优先级：请求体 fake.script > 控制台剧本 > 内置默认（429 → 200） */
+function resolveScriptSteps(fake: Record<string, unknown> | null, settings: Settings): ScriptStep[] {
+  if (fake && Array.isArray(fake.script)) {
+    const parsed = scriptStepSchema.array().safeParse(fake.script)
+    if (parsed.success && parsed.data.length > 0) return parsed.data
+  }
+  return settings.script.length > 0 ? settings.script : DEFAULT_SCRIPT
+}
+
 export function createApp(deps: AppDeps): Hono {
   const { hub, env } = deps
   const app = new Hono()
   const bootedAt = Date.now()
+  // 剧本按「模型名」累计调用次数：第 N 次调用用剧本第 N 步
+  const scriptCounters = new Map<string, number>()
 
   // ---------- 通用：CORS ----------
   app.use('*', async (c, next) => {
@@ -169,7 +180,7 @@ export function createApp(deps: AppDeps): Hono {
       index,
       embedding: fakeVector(text, dims),
     }))
-    const promptTokens = texts.reduce((sum, text) => sum + countTokens(text, settings.unit), 0)
+    const promptTokens = texts.reduce((sum, text) => sum + countWith(settings.tokenizer, text, settings.unit), 0)
     return c.json({
       object: 'list',
       data,
@@ -187,15 +198,17 @@ export function createApp(deps: AppDeps): Hono {
     if (!parsed.ok) return jsonError(c, anthropicAdapter, 400, parsed.message)
     try {
       const request = anthropicAdapter.parse(parsed.value)
-      return c.json(anthropicAdapter.countTokensPayload(countTokens(request.promptText, settings.unit)) as never)
+      return c.json(
+        anthropicAdapter.countTokensPayload(countWith(settings.tokenizer, request.promptText, settings.unit)) as never,
+      )
     } catch (error) {
       return jsonError(c, anthropicAdapter, 400, describeError(error))
     }
   })
 
   // ---------- 主流程 ----------
-  app.post('/v1/chat/completions', (c) => handleChat(c, 'openai', hub))
-  app.post('/v1/messages', (c) => handleChat(c, 'anthropic', hub))
+  app.post('/v1/chat/completions', (c) => handleChat(c, 'openai', hub, scriptCounters))
+  app.post('/v1/messages', (c) => handleChat(c, 'anthropic', hub, scriptCounters))
 
   // ---------- 管理台 API ----------
   app.use('/admin/api/*', async (c, next) => {
@@ -225,6 +238,7 @@ export function createApp(deps: AppDeps): Hono {
       models: MODEL_PROFILES.map((p) => ({ id: p.id, label: p.label, description: p.description, kind: p.kind })),
       version: env.version,
       runtime: env.runtime,
+      scriptCounters: Object.fromEntries(scriptCounters),
       bootedAt,
       serverNow: Date.now(),
     })
@@ -280,6 +294,11 @@ export function createApp(deps: AppDeps): Hono {
     return c.json({ ok: session.abort(reason), session: session.snapshot() })
   })
 
+  app.post('/admin/api/script/reset', (c) => {
+    scriptCounters.clear()
+    return c.json({ ok: true })
+  })
+
   app.get('/admin/api/requests', async (c) => {
     const limit = Number(c.req.query('limit') ?? '50')
     const requests = await hub.listRequests(Number.isFinite(limit) ? limit : 50)
@@ -295,7 +314,12 @@ export function createApp(deps: AppDeps): Hono {
   return app
 }
 
-async function handleChat(c: Context, protocol: Protocol, hub: SessionHub): Promise<Response> {
+async function handleChat(
+  c: Context,
+  protocol: Protocol,
+  hub: SessionHub,
+  scriptCounters: Map<string, number>,
+): Promise<Response> {
   const adapter = protocol === 'openai' ? openaiAdapter : anthropicAdapter
   const settings = await hub.getSettings()
 
@@ -316,8 +340,17 @@ async function handleChat(c: Context, protocol: Protocol, hub: SessionHub): Prom
 
   const headers = collectHeaders(c)
   const fake = asRecord(asRecord(parsed.value)?.fake)
-  const behavior = resolveBehavior({ model: request.model, settings, headers, ...(fake ? { fake } : {}) })
-  const promptTokens = countTokens(request.promptText, settings.unit)
+  let behavior = resolveBehavior({ model: request.model, settings, headers, ...(fake ? { fake } : {}) })
+  const promptTokens = countWith(settings.tokenizer, request.promptText, settings.unit)
+
+  // 剧本档位：按模型名累计调用次数，取对应那一步
+  if (behavior.kind === 'script') {
+    const steps = resolveScriptSteps(fake, settings)
+    const index = scriptCounters.get(request.model) ?? 0
+    const step = steps[Math.min(index, steps.length - 1)] ?? { kind: 'fixed' as const }
+    scriptCounters.set(request.model, index + 1)
+    behavior = applyScriptStep(behavior, step, settings, index)
+  }
   const lint = lintRequest({ request, headers, apiKeys: settings.apiKeys })
 
   if (settings.strict) {

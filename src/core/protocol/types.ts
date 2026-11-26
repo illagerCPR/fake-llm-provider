@@ -10,6 +10,12 @@ export interface StreamInit {
   includeUsage: boolean
 }
 
+/** 假工具调用的目标函数 */
+export interface ToolSpec {
+  name: string
+  arguments: string
+}
+
 export interface ModelInfo {
   id: string
   displayName: string
@@ -26,11 +32,15 @@ export interface ProtocolAdapter {
   /** 该协议对模型列表路由的判别方式（用于 /v1/models 双形状） */
   parse(body: unknown): NormalizedRequest
   streamStart(init: StreamInit): Frame[]
+  /** 工具调用模式下的首帧（含 message_start / role + tool_calls 头） */
+  streamToolStart(init: StreamInit, tool: ToolSpec, callId: string): Frame[]
+  streamToolDelta(fragment: string, init: StreamInit): Frame[]
   streamDelta(text: string, init: StreamInit): Frame[]
   streamEnd(reason: StopReason, usage: Usage, init: StreamInit): Frame[]
   streamHeartbeat(style: HeartbeatStyle): Frame | null
   streamError(message: string, kind?: string): Frame[]
   complete(text: string, reason: StopReason, usage: Usage, init: StreamInit): unknown
+  completeTool(tool: ToolSpec, callId: string, usage: Usage, init: StreamInit): unknown
   errorBody(status: number, message: string, kind?: string): unknown
   modelsPayload(models: ModelInfo[]): unknown
   modelPayload(model: ModelInfo): unknown

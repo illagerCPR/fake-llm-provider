@@ -75,8 +75,8 @@ describe('OpenAI 兼容层', () => {
     expect(body.object).toBe('chat.completion')
     expect(body.choices[0].message.content).toBe('你好世界')
     expect(body.choices[0].finish_reason).toBe('stop')
-    expect(body.usage.completion_tokens).toBe(4)
-    expect(body.usage.total_tokens).toBe(body.usage.prompt_tokens + 4)
+    expect(body.usage.completion_tokens).toBe(2) // o200k：你好 / 世界 各 1 token
+    expect(body.usage.total_tokens).toBe(body.usage.prompt_tokens + 2)
   })
 
   it('流式输出可拼接、末尾带 [DONE] 与 usage 包', async () => {
@@ -97,7 +97,7 @@ describe('OpenAI 兼容层', () => {
     })
     expect(usageEvent).toBeTruthy()
     const usage = JSON.parse(usageEvent!.data) as { usage: { completion_tokens: number } }
-    expect(usage.usage.completion_tokens).toBe(4)
+    expect(usage.usage.completion_tokens).toBe(2)
   })
 
   it('不带 include_usage 时没有 usage 包', async () => {
@@ -210,7 +210,7 @@ describe('Anthropic 兼容层', () => {
     expect(body.type).toBe('message')
     expect(body.content[0]).toEqual({ type: 'text', text: '你好世界' })
     expect(body.stop_reason).toBe('end_turn')
-    expect(body.usage.output_tokens).toBe(4)
+    expect(body.usage.output_tokens).toBe(2)
   })
 
   it('流式事件顺序符合 Anthropic 协议', async () => {

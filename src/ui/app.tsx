@@ -51,6 +51,7 @@ export function App() {
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [scriptText, setScriptText] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -96,10 +97,22 @@ export function App() {
 
   const save = async () => {
     if (!draft) return
+    let next = draft
+    if (scriptText !== null) {
+      try {
+        const parsed = JSON.parse(scriptText)
+        if (!Array.isArray(parsed)) throw new Error('剧本必须是数组')
+        next = { ...draft, script: parsed }
+      } catch (err) {
+        setError(`剧本 JSON 解析失败：${err instanceof Error ? err.message : String(err)}`)
+        return
+      }
+    }
     setSaving(true)
     try {
-      const result = await api.saveSettings(draft)
+      const result = await api.saveSettings(next)
       setDraft(result.settings)
+      setScriptText(null)
       setDirty(false)
       setNotice('设置已保存')
       void refresh()
@@ -351,6 +364,53 @@ export function App() {
                     onInput={(e) => update({ logLimit: Number((e.target as HTMLInputElement).value) })}
                   />
                 </label>
+                <label class="field">
+                  <span>token 计数</span>
+                  <select
+                    value={draft.tokenizer}
+                    onChange={(e) => update({ tokenizer: (e.target as HTMLSelectElement).value as Settings['tokenizer'] })}
+                  >
+                    <option value="tiktoken">tiktoken（o200k 真词表）</option>
+                    <option value="heuristic">heuristic（估算）</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>假工具名</span>
+                  <input value={draft.toolName} onInput={(e) => update({ toolName: (e.target as HTMLInputElement).value })} />
+                </label>
+                <label class="field">
+                  <span>假工具参数（JSON 字符串）</span>
+                  <input value={draft.toolArgs} onInput={(e) => update({ toolArgs: (e.target as HTMLInputElement).value })} />
+                </label>
+                <label class="field wide">
+                  <span>剧本（JSON 数组，fake-script 档位按次生效；留空用默认「先 429 再成功」）</span>
+                  <textarea
+                    rows={5}
+                    value={scriptText ?? JSON.stringify(draft.script, null, 2)}
+                    onInput={(e) => {
+                      setScriptText((e.target as HTMLTextAreaElement).value)
+                      setDirty(true)
+                    }}
+                  />
+                </label>
+                <div class="field wide row gap">
+                  <button
+                    class="ghost"
+                    onClick={() => {
+                      void api.resetScripts().then(() => {
+                        setNotice('剧本计数已重置')
+                        void refresh()
+                      })
+                    }}
+                  >
+                    重置剧本计数
+                  </button>
+                  <span class="muted small">
+                    {Object.entries(state?.scriptCounters ?? {})
+                      .map(([model, count]) => `${model} ×${count}`)
+                      .join(' · ') || '暂无调用'}
+                  </span>
+                </div>
                 <label class="field checkbox">
                   <input type="checkbox" checked={draft.strict} onChange={(e) => update({ strict: (e.target as HTMLInputElement).checked })} />
                   <span>严格模式（体检失败直接 400）</span>
